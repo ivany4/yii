@@ -326,6 +326,106 @@ class CSqliteTest extends CTestCase
 		$this->assertEquals('email1',$this->db->createCommand('SELECT email_address FROM users WHERE id=1')->queryScalar());
 	}
 
+	public function testAlterColumn()
+	{
+		$this->db->schema->refresh();
+		$this->assertEquals(6,$this->db->createCommand('SELECT COUNT(*) FROM groups')->queryScalar());
+
+		$this->db->createCommand()->alterColumn('groups','name','text');
+
+		$this->db->schema->refresh();
+		$table=$this->db->schema->getTable('groups');
+		$this->assertTrue(stripos($table->columns['name']->dbType,'text')!==false);
+		// A non-autoincrement single-column primary key must survive the rebuild.
+		// (CDbTableSchema::primaryKey is a plain string for a single-column key,
+		// an array only for a composite one.)
+		$this->assertEquals('id',$table->primaryKey);
+		// The rest of the table -- other columns, all rows -- must survive untouched.
+		$this->assertEquals(6,$this->db->createCommand('SELECT COUNT(*) FROM groups')->queryScalar());
+		$this->assertEquals('group1',$this->db->createCommand('SELECT name FROM groups WHERE id=1')->queryScalar());
+	}
+
+	public function testAddPrimaryKey()
+	{
+		$this->db->createCommand('INSERT INTO types(int_col,char_col,float_col,bool_col) VALUES (1,\'a\',1.1,1)')->execute();
+		$this->db->schema->refresh();
+		$this->assertNull($this->db->schema->getTable('types')->primaryKey);
+
+		$this->db->createCommand()->addPrimaryKey('pk_types','types','int_col');
+
+		$this->db->schema->refresh();
+		$this->assertEquals('int_col',$this->db->schema->getTable('types')->primaryKey);
+		$this->assertEquals(1,$this->db->createCommand('SELECT COUNT(*) FROM types')->queryScalar());
+
+		try
+		{
+			$this->db->createCommand()->addPrimaryKey('pk_types_again','types','int_col');
+			$this->fail('Adding a primary key to a table that already has one should throw.');
+		}
+		catch(CDbException $e)
+		{
+		}
+	}
+
+	public function testDropPrimaryKey()
+	{
+		$this->db->schema->refresh();
+		$this->assertEquals(array('key1','key2'),$this->db->schema->getTable('orders')->primaryKey);
+
+		$this->db->createCommand()->dropPrimaryKey('pk_orders','orders');
+
+		$this->db->schema->refresh();
+		$table=$this->db->schema->getTable('orders');
+		$this->assertTrue($table->primaryKey===null || $table->primaryKey===array());
+		$this->assertEquals(4,$this->db->createCommand('SELECT COUNT(*) FROM orders')->queryScalar());
+
+		try
+		{
+			$this->db->createCommand()->dropPrimaryKey('pk_orders_again','orders');
+			$this->fail('Dropping a primary key from a table that has none should throw.');
+		}
+		catch(CDbException $e)
+		{
+		}
+	}
+
+	public function testAddForeignKey()
+	{
+		$this->db->schema->refresh();
+		$this->assertEquals(0,count($this->db->createCommand('PRAGMA foreign_key_list(posts_nofk)')->queryAll()));
+		$this->assertEquals(5,$this->db->createCommand('SELECT COUNT(*) FROM posts_nofk')->queryScalar());
+
+		$this->db->createCommand()->addForeignKey('FK_posts_nofk_author','posts_nofk','author_id','users','id','CASCADE','RESTRICT');
+
+		$this->db->schema->refresh();
+		$fk=$this->db->createCommand('PRAGMA foreign_key_list(posts_nofk)')->queryAll();
+		$this->assertEquals(1,count($fk));
+		$this->assertEquals('users',$fk[0]['table']);
+		$this->assertEquals(5,$this->db->createCommand('SELECT COUNT(*) FROM posts_nofk')->queryScalar());
+	}
+
+	public function testDropForeignKey()
+	{
+		$this->db->schema->refresh();
+		$fk=$this->db->createCommand('PRAGMA foreign_key_list(posts)')->queryAll();
+		$this->assertEquals(1,count($fk));
+
+		$this->db->createCommand()->dropForeignKey('FK_post_author','posts');
+
+		$this->db->schema->refresh();
+		$this->assertEquals(0,count($this->db->createCommand('PRAGMA foreign_key_list(posts)')->queryAll()));
+		$this->assertEquals(5,$this->db->createCommand('SELECT COUNT(*) FROM posts')->queryScalar());
+
+		try
+		{
+			$this->db->createCommand()->dropForeignKey('FK_does_not_exist','posts');
+			$this->fail('Dropping a foreign key that does not exist should throw.');
+		}
+		catch(CDbException $e)
+		{
+		}
+	}
+
 	public function testMultipleInsert()
 	{
 		$builder=$this->db->getSchema()->getCommandBuilder();

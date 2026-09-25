@@ -1442,7 +1442,28 @@ class CDbCommand extends CComponent
 	 */
 	public function alterColumn($table, $column, $type)
 	{
-		return $this->setText($this->getConnection()->getSchema()->alterColumn($table, $column, $type))->execute();
+		return $this->executeSchemaStatements($this->getConnection()->getSchema()->alterColumn($table, $column, $type));
+	}
+
+	/**
+	 * Executes one or more DDL statements built by a {@link CDbSchema} method.
+	 * Most such methods return a single SQL string, executed directly. Some (only
+	 * on SQLite currently, see {@link CSqliteSchema::rebuildTable}) instead return
+	 * an array of statements that must all run, in order, to perform an operation
+	 * SQLite has no single-statement way to express -- this executes each of those
+	 * in turn instead.
+	 * @param string|array $sql a single SQL statement, or an array of them to run in sequence.
+	 * @return integer number of rows affected by the execution of the last statement.
+	 * @since 1.1.33
+	 */
+	private function executeSchemaStatements($sql)
+	{
+		if(!is_array($sql))
+			return $this->setText($sql)->execute();
+		$result=0;
+		foreach($sql as $statement)
+			$result=$this->setText($statement)->execute();
+		return $result;
 	}
 
 	/**
@@ -1460,7 +1481,7 @@ class CDbCommand extends CComponent
 	 */
 	public function addForeignKey($name, $table, $columns, $refTable, $refColumns, $delete=null, $update=null)
 	{
-		return $this->setText($this->getConnection()->getSchema()->addForeignKey($name, $table, $columns, $refTable, $refColumns, $delete, $update))->execute();
+		return $this->executeSchemaStatements($this->getConnection()->getSchema()->addForeignKey($name, $table, $columns, $refTable, $refColumns, $delete, $update));
 	}
 
 	/**
@@ -1472,7 +1493,7 @@ class CDbCommand extends CComponent
 	 */
 	public function dropForeignKey($name, $table)
 	{
-		return $this->setText($this->getConnection()->getSchema()->dropForeignKey($name, $table))->execute();
+		return $this->executeSchemaStatements($this->getConnection()->getSchema()->dropForeignKey($name, $table));
 	}
 
 	/**
@@ -1622,7 +1643,7 @@ class CDbCommand extends CComponent
 	 */
 	public function addPrimaryKey($name,$table,$columns)
 	{
-		return $this->setText($this->getConnection()->getSchema()->addPrimaryKey($name,$table,$columns))->execute();
+		return $this->executeSchemaStatements($this->getConnection()->getSchema()->addPrimaryKey($name,$table,$columns));
 	}
 
 	/**
@@ -1634,6 +1655,6 @@ class CDbCommand extends CComponent
 	 */
 	public function dropPrimaryKey($name,$table)
 	{
-		return $this->setText($this->getConnection()->getSchema()->dropPrimaryKey($name,$table))->execute();
+		return $this->executeSchemaStatements($this->getConnection()->getSchema()->dropPrimaryKey($name,$table));
 	}
 }

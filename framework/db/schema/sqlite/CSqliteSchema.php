@@ -256,7 +256,10 @@ class CSqliteSchema extends CDbSchema
 
 	/**
 	 * Builds a SQL statement for adding a foreign key constraint to an existing table.
-	 * Because SQLite does not support adding foreign key to an existing table, calling this method will throw an exception.
+	 * SQLite has no single-statement way to add a foreign key constraint to an
+	 * existing table; the constraint must be baked into the table's definition. This
+	 * rebuilds the table (see {@link rebuildTable}) with the new foreign key added,
+	 * which is why it returns an array of statements rather than a single one.
 	 * @param string $name the name of the foreign key constraint.
 	 * @param string $table the table that the foreign key constraint will be added to.
 	 * @param string $columns the name of the column to that the constraint will be added on. If there are multiple columns, separate them with commas.
@@ -264,44 +267,95 @@ class CSqliteSchema extends CDbSchema
 	 * @param string $refColumns the name of the column that the foreign key references to. If there are multiple columns, separate them with commas.
 	 * @param string $delete the ON DELETE option. Most DBMS support these options: RESTRICT, CASCADE, NO ACTION, SET DEFAULT, SET NULL
 	 * @param string $update the ON UPDATE option. Most DBMS support these options: RESTRICT, CASCADE, NO ACTION, SET DEFAULT, SET NULL
-	 * @return string the SQL statement for adding a foreign key constraint to an existing table.
+	 * @return array the SQL statements for adding a foreign key constraint to an existing table.
 	 * @since 1.1.6
-	 * @throws CDbException
 	 */
 	public function addForeignKey($name, $table, $columns, $refTable, $refColumns, $delete=null, $update=null)
 	{
-		throw new CDbException(Yii::t('yii', 'Adding a foreign key constraint to an existing table is not supported by SQLite.'));
+		if(is_string($columns))
+			$columns=preg_split('/\s*,\s*/',$columns,-1,PREG_SPLIT_NO_EMPTY);
+		foreach($columns as $i=>$col)
+			$columns[$i]=$this->quoteColumnName($col);
+		if(is_string($refColumns))
+			$refColumns=preg_split('/\s*,\s*/',$refColumns,-1,PREG_SPLIT_NO_EMPTY);
+		foreach($refColumns as $i=>$col)
+			$refColumns[$i]=$this->quoteColumnName($col);
+		$fk='CONSTRAINT '.$this->quoteColumnName($name)
+			.' FOREIGN KEY ('.implode(', ',$columns).')'
+			.' REFERENCES '.$this->quoteTableName($refTable)
+			.' ('.implode(', ',$refColumns).')';
+		if($delete!==null)
+			$fk.=' ON DELETE '.$delete;
+		if($update!==null)
+			$fk.=' ON UPDATE '.$update;
+		return $this->rebuildTable($table,function($def) use ($fk)
+		{
+			$def['constraints'][]=$fk;
+			return $def;
+		});
 	}
 
 	/**
 	 * Builds a SQL statement for dropping a foreign key constraint.
-	 * Because SQLite does not support dropping a foreign key constraint, calling this method will throw an exception.
-	 * @param string $name the name of the foreign key constraint to be dropped. The name will be properly quoted by the method.
+	 * SQLite has no single-statement way to drop a foreign key constraint from an
+	 * existing table; like {@link addForeignKey}, this rebuilds the table (see
+	 * {@link rebuildTable}) without it.
+	 * @param string $name the name of the foreign key constraint to be dropped.
 	 * @param string $table the table whose foreign is to be dropped. The name will be properly quoted by the method.
-	 * @return string the SQL statement for dropping a foreign key constraint.
+	 * @return array the SQL statements for dropping a foreign key constraint.
 	 * @since 1.1.6
-	 * @throws CDbException
+	 * @throws CDbException if the named constraint is not found on the table
 	 */
 	public function dropForeignKey($name, $table)
 	{
-		throw new CDbException(Yii::t('yii', 'Dropping a foreign key constraint is not supported by SQLite.'));
+		return $this->rebuildTable($table,function($def) use ($name,$table)
+		{
+			$found=false;
+			foreach($def['constraints'] as $i=>$constraint)
+			{
+				// The constraint name may or may not be quoted in the table's original
+				// CREATE TABLE text (addForeignKey() always quotes its own, but
+				// hand-written or externally-authored DDL often does not), so match
+				// either form.
+				if(preg_match('/^CONSTRAINT\s+(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\S+))\s/i',$constraint,$m))
+				{
+					$constraintName=(isset($m[1]) && $m[1]!=='') ? $m[1] : ((isset($m[2]) && $m[2]!=='') ? $m[2] : ((isset($m[3]) && $m[3]!=='') ? $m[3] : $m[4]));
+					if(strcasecmp($constraintName,$name)===0)
+					{
+						unset($def['constraints'][$i]);
+						$found=true;
+						break;
+					}
+				}
+			}
+			if(!$found)
+				throw new CDbException(Yii::t('yii','Foreign key "{name}" on table "{table}" is not found.',array('{name}'=>$name,'{table}'=>$table)));
+			return $def;
+		});
 	}
 
 	/**
 	 * Builds a SQL statement for changing the definition of a column.
-	 * Because SQLite does not support altering a DB column, calling this method will throw an exception.
+	 * SQLite has no ALTER TABLE ... ALTER COLUMN; this rebuilds the table (see
+	 * {@link rebuildTable}) with the column's type changed, which is why it returns
+	 * an array of statements rather than a single one.
 	 * @param string $table the table whose column is to be changed. The table name will be properly quoted by the method.
 	 * @param string $column the name of the column to be changed. The name will be properly quoted by the method.
 	 * @param string $type the new column type. The {@link getColumnType} method will be invoked to convert abstract column type (if any)
 	 * into the physical one. Anything that is not recognized as abstract type will be kept in the generated SQL.
 	 * For example, 'string' will be turned into 'varchar(255)', while 'string not null' will become 'varchar(255) not null'.
-	 * @return string the SQL statement for changing the definition of a column.
+	 * @return array the SQL statements for changing the definition of a column.
 	 * @since 1.1.6
-	 * @throws CDbException
 	 */
 	public function alterColumn($table, $column, $type)
 	{
-		throw new CDbException(Yii::t('yii', 'Altering a DB column is not supported by SQLite.'));
+		return $this->rebuildTable($table,function($def) use ($column,$type)
+		{
+			if(!isset($def['columns'][$column]))
+				throw new CDbException(Yii::t('yii','Column "{column}" on table "{table}" is not found.',array('{column}'=>$column,'{table}'=>'')));
+			$def['columns'][$column]=$this->quoteColumnName($column).' '.$this->getColumnType($type);
+			return $def;
+		});
 	}
 
 	/**
@@ -318,32 +372,209 @@ class CSqliteSchema extends CDbSchema
 
 	/**
 	 * Builds a SQL statement for adding a primary key constraint to an existing table.
-	 * Because SQLite does not support adding a primary key on an existing table this method will throw an exception.
-	 * @param string $name the name of the primary key constraint.
+	 * SQLite has no single-statement way to add a primary key to an existing table;
+	 * this rebuilds the table (see {@link rebuildTable}) with the given columns
+	 * declared as its primary key, which is why it returns an array of statements
+	 * rather than a single one.
+	 * @param string $name the name of the primary key constraint. Not used: SQLite
+	 * does not name primary key constraints, the column(s) simply are the primary key.
 	 * @param string $table the table that the primary key constraint will be added to.
 	 * @param string|array $columns comma separated string or array of columns that the primary key will consist of.
-	 * @return string the SQL statement for adding a primary key constraint to an existing table.
+	 * @return array the SQL statements for adding a primary key constraint to an existing table.
 	 * @since 1.1.13
-	 * @throws CDbException
+	 * @throws CDbException if the table already has a primary key
 	 */
 	public function addPrimaryKey($name,$table,$columns)
 	{
-		throw new CDbException(Yii::t('yii', 'Adding a primary key after table has been created is not supported by SQLite.'));
+		if(!is_array($columns))
+			$columns=preg_split('/\s*,\s*/',$columns,-1,PREG_SPLIT_NO_EMPTY);
+		return $this->rebuildTable($table,function($def) use ($table,$columns)
+		{
+			if($def['primaryKey']!==array())
+				throw new CDbException(Yii::t('yii','Table "{table}" already has a primary key.',array('{table}'=>$table)));
+			$def['primaryKey']=$columns;
+			return $def;
+		});
 	}
 
 
 	/**
 	 * Builds a SQL statement for removing a primary key constraint to an existing table.
-	 * Because SQLite does not support dropping a primary key from an existing table this method will throw an exception
-	 * @param string $name the name of the primary key constraint to be removed.
+	 * SQLite has no single-statement way to drop a primary key from an existing
+	 * table; like {@link addPrimaryKey}, this rebuilds the table (see
+	 * {@link rebuildTable}) without it. The affected column(s) keep their other
+	 * properties (type, nullability, etc.), they just stop being the primary key.
+	 * @param string $name the name of the primary key constraint to be removed. Not used, see {@link addPrimaryKey}.
 	 * @param string $table the table that the primary key constraint will be removed from.
-	 * @return string the SQL statement for removing a primary key constraint from an existing table.
+	 * @return array the SQL statements for removing a primary key constraint from an existing table.
 	 * @since 1.1.13
-	 * @throws CDbException
+	 * @throws CDbException if the table has no primary key
 	 */
 	public function dropPrimaryKey($name,$table)
 	{
-		throw new CDbException(Yii::t('yii', 'Removing a primary key after table has been created is not supported by SQLite.'));
+		return $this->rebuildTable($table,function($def) use ($table)
+		{
+			if($def['primaryKey']===array())
+				throw new CDbException(Yii::t('yii','Table "{table}" does not have a primary key.',array('{table}'=>$table)));
+			$def['primaryKey']=array();
+			return $def;
+		});
+	}
 
+	/**
+	 * Rebuilds a table with a change applied to its definition.
+	 *
+	 * SQLite does not support most forms of `ALTER TABLE` beyond renaming the table
+	 * itself or a column, or adding a column, or (since SQLite 3.35.0) dropping a
+	 * column. Every other kind of schema change -- changing a column's type,
+	 * adding/dropping a foreign key or a primary key -- requires recreating the
+	 * table under SQLite's own documented 12-step procedure:
+	 * {@link https://www.sqlite.org/lang_altertable.html#otheralter}. This helper
+	 * implements that procedure generically: it reads the table's current
+	 * definition, lets the caller transform it, then returns the SQL statements
+	 * (create the replacement, copy the data across, drop the original, rename the
+	 * replacement into place, recreate any indexes) to actually do so. It is the
+	 * caller's responsibility to execute all of them, in order, inside the same
+	 * transaction -- {@link CDbCommand} does this automatically whenever a schema
+	 * method returns an array instead of a string.
+	 *
+	 * Known limitation: does not recreate triggers defined on the table, and does
+	 * not update foreign keys *from other tables* that reference this one (SQLite
+	 * does not enforce referential integrity across a table rebuild by default,
+	 * see `PRAGMA foreign_keys`, but does not rewrite the child tables' constraint
+	 * definitions either, so they will still reference the correct table name --
+	 * only a rename or drop of the referenced column(s) themselves would break
+	 * them, and this helper does not support that for a referenced table).
+	 *
+	 * @param string $table the table to rebuild. The name will be properly quoted by the method.
+	 * @param callable $transform receives the table's current definition as an array
+	 * with keys 'columns' (column name => quoted column name plus type/constraints,
+	 * in original column order), 'primaryKey' (array of column names, possibly
+	 * empty) and 'constraints' (array of table-level constraint clauses, e.g.
+	 * foreign keys), and must return the (possibly modified) same shape.
+	 * @return array the SQL statements to rebuild the table as transformed.
+	 * @since 1.1.33
+	 */
+	protected function rebuildTable($table,$transform)
+	{
+		$schema=$this->getTable($table,true);
+		if($schema===null)
+			throw new CDbException(Yii::t('yii','Table "{table}" does not exist.',array('{table}'=>$table)));
+
+		// Column and table-level-constraint clauses are taken from the table's own
+		// original CREATE TABLE text (not reconstructed from PRAGMA metadata): a
+		// constraint's own name (e.g. a named FOREIGN KEY, which dropForeignKey()
+		// needs to find again later) is only available there -- PRAGMA
+		// foreign_key_list, for one, does not expose it at all.
+		$createSql=$this->getDbConnection()->createCommand(
+			'SELECT sql FROM sqlite_master WHERE type=\'table\' AND name='.$this->getDbConnection()->quoteValue($table)
+		)->queryScalar();
+		$body=substr($createSql,strpos($createSql,'(')+1);
+		$body=substr($body,0,strrpos($body,')'));
+
+		$columns=array();
+		$constraints=array();
+		foreach($this->splitDefinitionClauses($body) as $clause)
+		{
+			if(preg_match('/^(CONSTRAINT|PRIMARY\s+KEY|UNIQUE|CHECK|FOREIGN\s+KEY)\b/i',$clause))
+			{
+				// A table-level PRIMARY KEY clause is re-derived from $schema->primaryKey
+				// below instead (which already correctly handles both the single- and
+				// composite-column cases), so it must not also be kept verbatim here --
+				// otherwise a plain alterColumn() etc. would duplicate it.
+				if(!preg_match('/^PRIMARY\s+KEY\b/i',$clause))
+					$constraints[]=$clause;
+			}
+			elseif(preg_match('/^\s*(?:"([^"]+)"|`([^`]+)`|\[([^\]]+)\]|(\S+))/',$clause,$m))
+			{
+				$colName=(isset($m[1]) && $m[1]!=='') ? $m[1] : ((isset($m[2]) && $m[2]!=='') ? $m[2] : ((isset($m[3]) && $m[3]!=='') ? $m[3] : $m[4]));
+				$columns[$colName]=trim($clause);
+			}
+		}
+
+		$primaryKey=$schema->primaryKey===null ? array() : (array)$schema->primaryKey;
+		// A single-column primary key declared inline on the column itself (e.g.
+		// "id INTEGER PRIMARY KEY" or "... PRIMARY KEY AUTOINCREMENT") is already
+		// expressed as part of that column's own clause text, so it must not also
+		// be repeated as a table-level constraint below. This is judged from the
+		// clause text itself, not CDbColumnSchema::autoIncrement -- that flag
+		// reflects SQLite's rowid-alias semantics, which can be true for a column
+		// whose primary key is in fact a *separate* table-level constraint (e.g.
+		// one this same method added on a previous rebuild), where the column's
+		// own clause carries no "PRIMARY KEY" text at all.
+		$inlinePk=count($primaryKey)===1 && isset($columns[$primaryKey[0]])
+			&& preg_match('/\bPRIMARY\s+KEY\b/i',$columns[$primaryKey[0]]);
+
+		$def=call_user_func($transform,array(
+			'columns'=>$columns,
+			'primaryKey'=>$inlinePk ? array() : $primaryKey,
+			'constraints'=>$constraints,
+		));
+
+		$parts=array_values($def['columns']);
+		if($def['primaryKey']!==array())
+		{
+			$quoted=array_map(array($this,'quoteColumnName'),$def['primaryKey']);
+			$parts[]='PRIMARY KEY ('.implode(', ',$quoted).')';
+		}
+		foreach($def['constraints'] as $constraint)
+			$parts[]=$constraint;
+
+		$tempTable=$table.'__rebuild_'.substr(md5(uniqid('',true)),0,8);
+		$quotedTemp=$this->quoteTableName($tempTable);
+		$quotedColumns=implode(', ',array_map(array($this,'quoteColumnName'),array_keys($def['columns'])));
+
+		$statements=array();
+		$statements[]='CREATE TABLE '.$quotedTemp." (\n\t".implode(",\n\t",$parts)."\n)";
+		$statements[]='INSERT INTO '.$quotedTemp.' ('.$quotedColumns.') SELECT '.$quotedColumns.' FROM '.$schema->rawName;
+		$statements[]='DROP TABLE '.$schema->rawName;
+		$statements[]=$this->renameTable($tempTable,$table);
+
+		$indexes=$this->getDbConnection()->createCommand(
+			'SELECT sql FROM sqlite_master WHERE type=\'index\' AND tbl_name='.$this->getDbConnection()->quoteValue($table).' AND sql IS NOT NULL'
+		)->queryColumn();
+		foreach($indexes as $indexSql)
+			$statements[]=$indexSql;
+
+		return $statements;
+	}
+
+	/**
+	 * Splits the body of a `CREATE TABLE (...)` statement into its individual
+	 * column and table-constraint clauses, respecting parenthesis nesting (e.g. a
+	 * `DECIMAL(10,2)` column type's own comma) so a naive `explode(',', ...)` would
+	 * not misparse it.
+	 *
+	 * Known limitation: does not account for a comma inside a quoted string literal
+	 * (e.g. a `DEFAULT 'a,b'`), which would be misparsed as two clauses. Reasonable
+	 * for now: none of the practical DDL this is meant to support requires that.
+	 *
+	 * @param string $body the text strictly between a CREATE TABLE statement's outer parentheses.
+	 * @return array the individual clauses, each trimmed of surrounding whitespace.
+	 * @since 1.1.33
+	 */
+	private function splitDefinitionClauses($body)
+	{
+		$clauses=array();
+		$depth=0;
+		$current='';
+		for($i=0,$len=strlen($body);$i<$len;$i++)
+		{
+			$ch=$body[$i];
+			if($ch==='(')
+				$depth++;
+			elseif($ch===')')
+				$depth--;
+			if($ch===',' && $depth===0)
+			{
+				$clauses[]=trim($current);
+				$current='';
+			}
+			else
+				$current.=$ch;
+		}
+		if(trim($current)!=='')
+			$clauses[]=trim($current);
+		return $clauses;
 	}
 }
