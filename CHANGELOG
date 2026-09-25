@@ -4,6 +4,9 @@
 Version 1.1.33 under development
 --------------------------------
 
+- Enh: `CSqliteSchema::dropColumn()`/`renameColumn()` now use SQLite's native
+  `ALTER TABLE ... DROP COLUMN`/`RENAME COLUMN` (supported since SQLite 3.35.0/3.25.0)
+  instead of unconditionally throwing (YOUR_GITHUB_HANDLE)
 - Bug #4607: Fix loading CHttpSessionHandler when using yiilite on Yii 1.1.32 and PHP 7+ (tance77, marcovtwout)
 - Bug #4612: PHP 8.4 compatibility: Fix deprecated use of E_USER_ERROR in gii/components/Pear/Text/Diff (marcovtwout)
 - Enh #4598: Added support for PHP 8.5 (marcovtwout, ac-dc)

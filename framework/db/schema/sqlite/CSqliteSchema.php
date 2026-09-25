@@ -220,31 +220,38 @@ class CSqliteSchema extends CDbSchema
 
 	/**
 	 * Builds a SQL statement for dropping a DB column.
-	 * Because SQLite does not support dropping a DB column, calling this method will throw an exception.
+	 * SQLite has supported `ALTER TABLE ... DROP COLUMN` natively since version 3.35.0
+	 * (2021-03-12); on an older SQLite library this statement itself will fail at
+	 * execution time with a syntax error, since there is no reliable, cheap way to
+	 * detect the linked SQLite version from here.
 	 * @param string $table the table whose column is to be dropped. The name will be properly quoted by the method.
 	 * @param string $column the name of the column to be dropped. The name will be properly quoted by the method.
 	 * @return string the SQL statement for dropping a DB column.
 	 * @since 1.1.6
-	 * @throws CDbException
 	 */
 	public function dropColumn($table, $column)
 	{
-		throw new CDbException(Yii::t('yii', 'Dropping DB column is not supported by SQLite.'));
+		return 'ALTER TABLE '.$this->quoteTableName($table)
+			.' DROP COLUMN '.$this->quoteColumnName($column);
 	}
 
 	/**
 	 * Builds a SQL statement for renaming a column.
-	 * Because SQLite does not support renaming a DB column, calling this method will throw an exception.
+	 * SQLite has supported `ALTER TABLE ... RENAME COLUMN` natively since version
+	 * 3.25.0 (2018-09-15); on an older SQLite library this statement itself will fail
+	 * at execution time with a syntax error, since there is no reliable, cheap way to
+	 * detect the linked SQLite version from here.
 	 * @param string $table the table whose column is to be renamed. The name will be properly quoted by the method.
 	 * @param string $name the old name of the column. The name will be properly quoted by the method.
 	 * @param string $newName the new name of the column. The name will be properly quoted by the method.
 	 * @return string the SQL statement for renaming a DB column.
 	 * @since 1.1.6
-	 * @throws CDbException
 	 */
 	public function renameColumn($table, $name, $newName)
 	{
-		throw new CDbException(Yii::t('yii', 'Renaming a DB column is not supported by SQLite.'));
+		return 'ALTER TABLE '.$this->quoteTableName($table)
+			.' RENAME COLUMN '.$this->quoteColumnName($name)
+			.' TO '.$this->quoteColumnName($newName);
 	}
 
 	/**
